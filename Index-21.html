@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html><head><base target="_top"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Management Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f3f5f9;--card:#fff;--tx:#1b2433;--mu:#6b7690;--bd:#e2e6ee;--pr:#1e40af;--sb:#10203f}
+body.dark{--bg:#0f1523;--card:#182033;--tx:#e6eaf3;--mu:#98a3bd;--bd:#2a3550;--pr:#6c8cff;--sb:#0a1020}
+*{box-sizing:border-box}body{margin:0;font:14px/1.4 system-ui,Segoe UI,Arial;background:var(--bg);color:var(--tx)}
+#side{position:fixed;inset:0 auto 0 0;width:220px;background:var(--sb);color:#cfd8ee;overflow:auto;transition:.2s;z-index:20}
+#side h2{margin:0;padding:16px;font-size:15px;color:#fff}#side a{display:block;padding:9px 16px;cursor:pointer;border-left:3px solid transparent}
+#side a:hover{background:#ffffff14}#side a.on{background:#ffffff1f;border-color:#6c8cff;color:#fff}
+#main{margin-left:220px}header{display:flex;gap:10px;align-items:center;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:10}
+header h1{font-size:17px;margin:0;flex:1}#menu{display:none}
+input,select,textarea{padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);font:inherit;width:100%}
+header input{width:200px}button{padding:8px 12px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);cursor:pointer;font:inherit}
+button.p{background:var(--pr);color:#fff;border-color:var(--pr)}button.d{color:#c0392b}
+#view{padding:18px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}.kpi b{display:block;font-size:22px;margin-top:4px}.kpi span{color:var(--mu);font-size:12px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.qa{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 16px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}.bar input{max-width:260px}
+.tw{overflow:auto;background:var(--card);border:1px solid var(--bd);border-radius:10px}table{border-collapse:collapse;width:100%}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}th{cursor:pointer;color:var(--mu);font-size:12px;text-transform:uppercase}
+.bg{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#e5e9f5;color:#334}
+.PAID,.Active{background:#d7f5e0;color:#146c2e}.PENDING,.Upcoming{background:#fff1cc;color:#8a5a00}.OVERDUE,.Expired,.Cancelled{background:#fddcdc;color:#a11}.PARTIALLY.PAID,.Expiring.Soon{background:#ffe3c7;color:#9a4a00}
+#modal{position:fixed;inset:0;background:#0008;display:none;align-items:flex-start;justify-content:center;overflow:auto;z-index:50;padding:30px 10px}
+#modal .box{background:var(--card);border-radius:12px;max-width:760px;width:100%;padding:18px}.fg{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fg label{font-size:12px;color:var(--mu);display:block;margin-bottom:3px}.fg .w{grid-column:1/-1}
+#toast{position:fixed;right:16px;bottom:16px;z-index:99}#toast div{background:#1b2433;color:#fff;padding:10px 14px;border-radius:8px;margin-top:6px}#toast .e{background:#b3261e}
+.empty{padding:30px;text-align:center;color:var(--mu)}
+@media(max-width:800px){#side{transform:translateX(-100%)}#side.open{transform:none}#main{margin-left:0}#menu{display:block}.fg{grid-template-columns:1fr}header input{width:120px}}
+@media print{#side,header,.bar,.qa{display:none}#main{margin:0}}
+</style></head><body>
+<nav id="side"></nav>
+<div id="main"><header><button id="menu" onclick="$('#side').classList.toggle('open')">☰</button><h1 id="title">Dashboard</h1>
+<input id="gs" placeholder="Search this page…" oninput="S.q=this.value;S.pg=0;S.k&&S.rows&&drawTable()">
+<span id="who" style="color:var(--mu);font-size:12px"></span><button onclick="toggleDark()">🌓</button></header>
+<div id="view"></div></div>
+<div id="modal"><div class="box" id="mbox"></div></div><div id="toast"></div><datalist id="vl"></datalist>
+<script>
+var S={q:'',pg:0,PER:12},compute;
+const $=s=>document.querySelector(s);
+const esc=v=>String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inr=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
+const dmy=s=>/^\d{4}-\d\d-\d\d$/.test(s)?s.split('-').reverse().join('-'):(s||'');
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const view=h=>$('#view').innerHTML=h;
+function toast(m,err){const d=document.createElement('div');d.className=err?'e':'';d.textContent=m;$('#toast').appendChild(d);setTimeout(()=>d.remove(),4500)}
+function gs(fn,...a){return new Promise((ok,no)=>google.script.run.withSuccessHandler(r=>{if(r&&r.success===false){toast(r.message,1);no(r)}else ok(r&&r.data)}).withFailureHandler(e=>{toast(e.message,1);no(e)})[fn](...a))}
+function toggleDark(){document.body.classList.toggle('dark');localStorage.setItem('dark',document.body.classList.contains('dark')?1:0)}
+if(localStorage.getItem('dark')==1)document.body.classList.add('dark');
+const canW=()=>S.user&&S.user.role!='Viewer',canD=()=>S.user&&['Super Admin','Admin','Manager'].includes(S.user.role);
+
+gs('init').then(d=>{S.cfg=d.cfg;S.user=d.user;S.vendors=d.vendors;compute=eval('('+d.computeSrc+')');fillVendors();
+ $('#who').textContent=d.user.name+' · '+d.user.role;
+ const items=[['dash','Dashboard'],...Object.keys(S.cfg).map(k=>[k,S.cfg[k].title]),['vendors','Vendors']];
+ $('#side').innerHTML='<h2>📢 Media Management</h2>'+items.map(i=>`<a data-k="${i[0]}" onclick="go('${i[0]}')">${i[1]}</a>`).join('');go('dash')
+}).catch(e=>view('<div class="empty">'+esc(e.message||'Unable to load')+'</div>'));
+
+function fillVendors(){$('#vl').innerHTML=S.vendors.map(v=>`<option value="${esc(v)}">`).join('')}
+function go(k){S.k=k;S.q='';$('#gs').value='';$('#side').classList.remove('open');document.querySelectorAll('#side a').forEach(a=>a.classList.toggle('on',a.dataset.k==k));
+ $('#title').textContent=k=='dash'?'Dashboard':k=='vendors'?'Vendor Master':S.cfg[k].title;
+ view('<div class="empty">Loading…</div>');k=='dash'?dash():k=='vendors'?vendors():mod(k)}
+
+/* ---------- dashboard ---------- */
+let charts=[];
+async function dash(){const r=await gs('getDashboardData');charts.forEach(c=>c.destroy());charts=[];
+ const K=[['Total Media Spend',inr(r.spend)],['Paid Amount',inr(r.paid)],['Pending Amount',inr(r.pending)],['Overdue Amount',inr(r.overdue)],['Total Records',r.records],['Active Hoardings',r.hoardings],['Upcoming Events',r.events],['Total Vendors',r.vendors]];
+ view('<div class="grid">'+K.map(x=>`<div class="card kpi"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('')+'</div><div class="qa">'+Object.keys(S.cfg).map(k=>`<button class="p" onclick="add('${k}')">+ ${esc(S.cfg[k].title)}</button>`).join('')+'<button class="p" onclick="vForm()">+ Vendor</button></div><div class="charts"><div class="card"><b>Category-wise Spending</b><canvas id="c1"></canvas></div><div class="card"><b>Payment Status (count)</b><canvas id="c2"></canvas></div></div>');
+ const col=['#1e40af','#0891b2','#16a34a','#d97706','#dc2626','#7c3aed','#db2777','#65a30d','#0d9488','#ea580c','#475569'];
+ charts.push(new Chart($('#c1'),{type:'bar',data:{labels:Object.keys(r.cat),datasets:[{data:Object.values(r.cat),backgroundColor:col}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}}));
+ charts.push(new Chart($('#c2'),{type:'doughnut',data:{labels:Object.keys(r.status),datasets:[{data:Object.values(r.status),backgroundColor:['#16a34a','#d97706','#ea580c','#dc2626']}]}}))}
+
+/* ---------- module table ---------- */
+const XL={vendorName:'Vendor',balance:'Balance',payStatus:'Payment',hStatus:'Status',duration:'Duration'};
+function cols(k){const skip=['billNo','billDate','dueDate','amount','paid','payDate'];
+ const b=S.cfg[k].f.filter(f=>!['vendor','area','file'].includes(f[2])&&!skip.includes(f[0])).slice(0,3).map(f=>f[0]);
+ return ['vendorName',...b,'amount','paid','balance','payStatus',...(k=='hoarding'?['hStatus','duration']:[])]}
+function lab(k,c){if(XL[c])return XL[c];const f=S.cfg[k].f.find(f=>f[0]==c);return f?f[1]:c}
+function cell(k,c,v){const f=S.cfg[k].f.find(f=>f[0]==c);if(c=='payStatus'||c=='hStatus')return v?`<span class="bg ${esc(v)}">${esc(v)}</span>`:'';
+ if(['amount','paid','balance'].includes(c))return inr(v);if(c=='duration')return v?v+' Days':'';if(f&&f[2]=='date')return dmy(v);return esc(v)}
+async function mod(k){S.rows=await gs('getRecords',k);S.pg=0;S.sort=null;drawTable()}
+function drawTable(){const k=S.k,C=cols(k);let r=S.rows.filter(x=>!S.q||JSON.stringify(Object.values(x)).toLowerCase().includes(S.q.toLowerCase()));
+ if(S.sort){const[c,d]=S.sort;r.sort((a,b)=>(isNaN(a[c])||isNaN(b[c])?String(a[c]).localeCompare(String(b[c])):a[c]-b[c])*d)}
+ const pages=Math.max(1,Math.ceil(r.length/S.PER));S.pg=Math.min(S.pg,pages-1);const pr=r.slice(S.pg*S.PER,S.pg*S.PER+S.PER);S.view=r;
+ view(`<div class="bar">${canW()?`<button class="p" onclick="add('${k}')">+ Add ${esc(S.cfg[k].title)}</button>`:''}<button onclick="csv()">Export CSV</button><button onclick="print()">Print</button><span style="color:var(--mu)">${r.length} records</span></div>`+
+ (r.length?`<div class="tw"><table><tr>${C.map(c=>`<th onclick="srt('${c}')">${esc(lab(k,c))}</th>`).join('')}<th></th></tr>${pr.map(x=>`<tr>${C.map(c=>`<td>${cell(k,c,x[c])}</td>`).join('')}<td><button onclick="edit('${x.id}')">${canW()?'Edit':'View'}</button> ${canD()?`<button class="d" onclick="del('${x.id}')">Delete</button>`:''}</td></tr>`).join('')}</table></div>
+ <div class="bar" style="margin-top:10px"><button onclick="S.pg--;drawTable()" ${S.pg<1?'disabled':''}>‹</button> Page ${S.pg+1}/${pages} <button onclick="S.pg++;drawTable()" ${S.pg>=pages-1?'disabled':''}>›</button></div>`:'<div class="empty">No records yet</div>'))}
+function srt(c){S.sort=S.sort&&S.sort[0]==c?[c,-S.sort[1]]:[c,1];drawTable()}
+function csv(){const C=cols(S.k),q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+ const t=[C.map(c=>q(lab(S.k,c))).join(',')].concat(S.view.map(x=>C.map(c=>q(x[c])).join(','))).join('\n');dl(t,S.k+'.csv','text/csv')}
+function dl(t,n,m){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:m}));a.download=n;a.click()}
+async function del(id){if(!confirm('Delete this record?'))return;await gs('deleteRecord',S.k,id);toast('Deleted');mod(S.k)}
+
+/* ---------- forms (vendor field = searchable dropdown fed by Vendor Master) ---------- */
+function inp(f,v){const[key,lab,t,req,opt]=f,id='f_'+key;
+ if(t=='area')return`<textarea id="${id}">${esc(v)}</textarea>`;
+ if(t=='select')return`<select id="${id}">${opt.map(o=>`<option ${o==v?'selected':''}>${o}</option>`).join('')}</select>`;
+ if(t=='vendor')return`<input id="${id}" list="vl" autocomplete="off" placeholder="Search & select vendor…" value="${esc(v)}">`;
+ if(t=='auto')return`<input id="${id}" readonly value="${esc(v)}">`;
+ if(t=='file')return`<input id="${id}" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp">${v?`<a href="${esc(v)}" target="_blank">Current file</a>`:''}`;
+ return`<input id="${id}" type="${t=='num'?'number':t}" step="any" value="${esc(v)}">`}
+function openForm(title,F,rec,onSave,pre){const ro=!canW();
+ $('#mbox').innerHTML=`<h3>${esc(title)}</h3><div class="fg">${F.map(f=>`<div class="${f[2]=='area'?'w':''}"><label>${esc(f[1])}${f[3]?' *':''}${f[2]=='auto'?' (AUTO)':''}</label>${inp(f,rec[f[0]])}</div>`).join('')}</div>
+ <div style="text-align:right;margin-top:14px"><button onclick="closeM()">Cancel</button> ${ro?'':'<button class="p" id="sv">Save</button>'}</div>`;
+ $('#modal').style.display='flex';if(ro)document.querySelectorAll('#mbox input,#mbox select,#mbox textarea').forEach(e=>e.disabled=true);
+ const prev=()=>{if(!pre)return;const o={};F.forEach(f=>{const e=$('#f_'+f[0]);if(f[2]!='file'&&f[2]!='auto')o[f[0]]=e.value});const c=compute(S.k,o,today());
+  F.filter(f=>f[2]=='auto').forEach(f=>{const v=c[f[0]];$('#f_'+f[0]).value=v==null?'':(f[0]=='duration'?v+' Days':['amount','printAmt'].includes(f[0])?inr(v):v)})};
+ $('#mbox').oninput=prev;prev();
+ if(!ro)$('#sv').onclick=async()=>{const o={};if(rec.id)o.id=rec.id;
+  for(const f of F){if(f[2]=='auto')continue;const e=$('#f_'+f[0]);
+   if(f[2]=='file'){o[f[0]]=rec[f[0]]||'';const fl=e.files[0];if(fl){$('#sv').textContent='Uploading…';o[f[0]]=await up(fl,S.k)}}else o[f[0]]=e.value}
+  const miss=F.filter(f=>f[3]&&!String(o[f[0]]).trim());if(miss.length)return toast(miss.map(f=>f[1]).join(', ')+' required',1);
+  $('#sv').disabled=true;try{await onSave(o);closeM()}catch(e){$('#sv').disabled=false;$('#sv').textContent='Save'}}}
+function closeM(){$('#modal').style.display='none'}
+function up(fl,k){return new Promise((ok,no)=>{if(fl.size>8e6){toast('File over 8 MB',1);return no()}const r=new FileReader();
+ r.onload=()=>gs('uploadFile',r.result.split(',')[1],fl.name,fl.type,k=='hoarding'?'Hoarding Photos':k=='events'?'Event Photos':k=='vinyl'?'Flex Designs':k=='wall'?'Wall Painting':k=='sponsor'?'Sponsor Documents':'Bills').then(ok,no);r.readAsDataURL(fl)})}
+function add(k){S.k=k;openForm('Add '+S.cfg[k].title,S.cfg[k].f,{},save,1)}
+function edit(id){const r=S.rows.find(x=>x.id==id),o={...r};o.vendor=r.vendorName;openForm((canW()?'Edit ':'View ')+S.cfg[S.k].title,S.cfg[S.k].f,o,save,1)}
+async function save(o){const r=await gs('saveRecord',S.k,o);toast('Saved'+(r.warning||''),!!r.warning&&0);go(S.k)}
+
+/* ---------- vendors ---------- */
+const VF=[['name','Vendor Name','text',1],['company','Company Name','text'],['category','Category','text'],['contact','Contact Person','text'],['phone','Phone','text'],['email','Email','text'],['gst','GST Number','text'],['address','Address','area'],['status','Status','select',0,['Active','Inactive']]];
+async function vendors(){S.vrows=await gs('getVendors');drawV()}
+function drawV(){const r=S.vrows.filter(v=>!S.q||JSON.stringify(Object.values(v)).toLowerCase().includes(S.q.toLowerCase()));
+ view(`<div class="bar">${canW()?`<button class="p" onclick="vForm()">+ Add Vendor</button><button onclick="$('#vf').click()">Import Vendors TXT</button><input id="vf" type="file" accept=".txt" hidden onchange="imp(this)">`:''}<button onclick="dl('Vendor Name 1\\nVendor Name 2\\nVendor Name 3','vendor_template.txt','text/plain')">Download Vendor TXT Template</button><span style="color:var(--mu)">${r.length} vendors</span></div>
+ <div class="tw"><table><tr><th>ID</th><th>Vendor</th><th>Category</th><th>Phone</th><th>Email</th><th>Status</th><th></th></tr>${r.slice(0,300).map(v=>`<tr><td>${esc(v.id)}</td><td>${esc(v.name)}</td><td>${esc(v.category)}</td><td>${esc(v.phone)}</td><td>${esc(v.email)}</td><td><span class="bg ${v.status=='Active'?'Active':'Expired'}">${esc(v.status)}</span></td><td>${canW()?`<button onclick="vForm('${v.id}')">Edit</button>`:''}</td></tr>`).join('')}</table></div>${r.length>300?'<p class="empty">Showing first 300 – use search to narrow.</p>':''}`)}
+$('#gs').addEventListener('input',()=>{if(S.k=='vendors'&&S.vrows)drawV()});
+function vForm(id){const rec=id?S.vrows.find(v=>v.id==id):{status:'Active'};S.k=id||S.k=='vendors'?'vendors':S.k;
+ openForm(id?'Edit Vendor':'Add Vendor',VF,rec,async o=>{await gs('saveVendor',o);await refreshV();toast('Vendor saved');if(S.k=='vendors')vendors()})}
+async function refreshV(){const d=await gs('init');S.vendors=d.vendors;fillVendors()}
+function imp(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{const s=await gs('importVendorsFromTxt',r.result);await refreshV();
+ alert(`Import summary\nLines read: ${s.total}\nNew vendors added: ${s.added}\nDuplicates skipped: ${s.duplicatesSkipped}\nBlank lines skipped: ${s.blankSkipped}`);vendors()};r.readAsText(f)}
+</script></body></html>
